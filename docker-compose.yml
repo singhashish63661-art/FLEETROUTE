@@ -1,0 +1,265 @@
+
+# ── GPS Fleet Management Platform — Local Dev Environment ─────────────────────
+# Usage:
+#   cp .env.example .env         # fill in values
+#   make gen-keys                 # generate JWT RSA keys
+#   docker compose up -d          # start everything
+#   make migrate-up               # run DB migrations
+
+networks:
+  gpsgo:
+    driver: bridge
+
+volumes:
+  timescale_data:
+  redis_data:
+  nats_data:
+  prometheus_data:
+  grafana_data:
+
+secrets:
+  jwt_private:
+    file: ./secrets/jwt_private.pem
+  jwt_public:
+    file: ./secrets/jwt_public.pem
+
+services:
+
+  # ── TimescaleDB (PostgreSQL + PostGIS + TimescaleDB) ──────────────────────
+  timescaledb:
+    image: timescale/timescaledb-ha:pg16
+    container_name: gpsgo-timescaledb
+    environment:
+      POSTGRES_DB: gpsgo
+      POSTGRES_USER: gpsgo
+      POSTGRES_PASSWORD: gpsgo
+    volumes:
+      - timescale_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    networks:
+      - gpsgo
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gpsgo -d gpsgo"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # ── Redis 7 ───────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: gpsgo-redis
+    command: redis-server --save 60 1 --loglevel warning
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    networks:
+      - gpsgo
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  # ── NATS with JetStream ───────────────────────────────────────────────────
+  nats:
+    image: nats:2.10-alpine
+    container_name: gpsgo-nats
+    command: ["-js", "-sd", "/data", "-m", "8222"]
+    volumes:
+      - nats_data:/data
+    ports:
+      - "4222:4222"  # client
+      - "8222:8222"  # monitoring
+    networks:
+      - gpsgo
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8222/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── DB Migrations ─────────────────────────────────────────────────────────
+  migrate:
+    image: migrate/migrate:v4.17.0
+    container_name: gpsgo-migrate
+    volumes:
+      - ./migrations:/migrations
+    command:
+      - "-path=/migrations"
+      - "-database=postgres://gpsgo:gpsgo@timescaledb:5432/gpsgo?sslmode=disable"
+      - "up"
+    networks:
+      - gpsgo
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+    restart: on-failure
+
+  # ── Ingestion Service ─────────────────────────────────────────────────────
+  ingestion:
+    build:
+      context: .
+      dockerfile: ingestion-service/Dockerfile
+    container_name: gpsgo-ingestion
+    environment:
+      NATS_URL: nats://nats:4222
+      LOG_LEVEL: info
+      PORT_GT06: 5001
+      PORT_TK103: 5002
+      PORT_JT808: 5003
+      PORT_AIS140: 5004
+      PORT_TELTONIKA_TCP: 5027
+      PORT_TELTONIKA_UDP: 5028
+    ports:
+      - "15001:5001"   # GT06
+      - "15002:5002"   # TK103
+      - "15003:5003"   # JT808
+      - "15004:5004"   # AIS140
+      - "15027:5027"   # Teltonika TCP
+      - "15028:5028/udp" # Teltonika UDP
+    networks:
+      - gpsgo
+    depends_on:
+      nats:
+        condition: service_healthy
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+
+  # ── Stream Processor ──────────────────────────────────────────────────────
+  stream-processor:
+    build:
+      context: .
+      dockerfile: stream-processor/Dockerfile
+    container_name: gpsgo-stream-processor
+    environment:
+      NATS_URL: nats://nats:4222
+      TIMESCALE_DSN: postgres://gpsgo:gpsgo@timescaledb:5432/gpsgo?sslmode=disable
+      REDIS_ADDR: redis:6379
+      LOG_LEVEL: info
+    networks:
+      - gpsgo
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  # ── API Service ───────────────────────────────────────────────────────────
+  api:
+    build:
+      context: .
+      dockerfile: api-service/Dockerfile
+    container_name: gpsgo-api
+    environment:
+      TIMESCALE_DSN: postgres://gpsgo:gpsgo@timescaledb:5432/gpsgo?sslmode=disable
+      REDIS_ADDR: redis:6379
+      API_PORT: 8080
+      JWT_PRIVATE_KEY_PATH: /run/secrets/jwt_private
+      JWT_PUBLIC_KEY_PATH: /run/secrets/jwt_public
+      LOG_LEVEL: info
+    secrets:
+      - jwt_private
+      - jwt_public
+    ports:
+      - "8080:8080"
+    networks:
+      - gpsgo
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8080/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  # ── WebSocket Service ─────────────────────────────────────────────────────
+  websocket:
+    build:
+      context: .
+      dockerfile: websocket-service/Dockerfile
+    container_name: gpsgo-websocket
+    environment:
+      REDIS_ADDR: redis:6379
+      WS_PORT: 8081
+      JWT_PRIVATE_KEY_PATH: /run/secrets/jwt_private
+      JWT_PUBLIC_KEY_PATH: /run/secrets/jwt_public
+      LOG_LEVEL: info
+    secrets:
+      - jwt_private
+      - jwt_public
+    ports:
+      - "8081:8081"
+    networks:
+      - gpsgo
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ── Frontend ──────────────────────────────────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: gpsgo-frontend
+    environment:
+      VITE_API_URL: http://localhost:8080
+      VITE_WS_URL: ws://localhost:8081
+    ports:
+      - "3000:80"
+    networks:
+      - gpsgo
+    depends_on:
+      - api
+      - websocket
+    restart: unless-stopped
+
+  # ── Prometheus ────────────────────────────────────────────────────────────
+  prometheus:
+    image: prom/prometheus:v2.52.0
+    container_name: gpsgo-prometheus
+    volumes:
+      - ./infra/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.retention.time=15d"
+    ports:
+      - "9090:9090"
+    networks:
+      - gpsgo
+    restart: unless-stopped
+
+  # ── Grafana ───────────────────────────────────────────────────────────────
+  grafana:
+    image: grafana/grafana:11.0.0
+    container_name: gpsgo-grafana
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./infra/grafana/provisioning:/etc/grafana/provisioning:ro
+    ports:
+      - "3001:3000"
+    networks:
+      - gpsgo
+    depends_on:
+      - prometheus
+    restart: unless-stopped

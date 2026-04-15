@@ -1,0 +1,47 @@
+# Go
+bin/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+vendor/
+go.sum.backup
+
+# Node / Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.env.local
+frontend/.env.*.local
+
+# Environment
+.env
+.env.local
+*.env
+
+# JWT / credentials (generate locally: make gen-keys)
+secrets/*.pem
+
+# GoAdmin uploads (local only)
+uploads/
+api-service/uploads/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# Docker
+*.tar
+
+# Generated
+api-service/internal/docs/
+**/*.pb.go
+
+# Test coverage
+coverage/
+*.coverprofile

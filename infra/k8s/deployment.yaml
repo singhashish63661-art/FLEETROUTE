@@ -1,0 +1,171 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api-service
+  labels:
+    app: api-service
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: api-service
+  template:
+    metadata:
+      labels:
+        app: api-service
+    spec:
+      containers:
+      - name: api-service
+        image: gpsgo-api:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8080
+        envFrom:
+        - configMapRef:
+            name: gpsgo-config
+        - secretRef:
+            name: gpsgo-secrets
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: stream-processor
+  labels:
+    app: stream-processor
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: stream-processor
+  template:
+    metadata:
+      labels:
+        app: stream-processor
+    spec:
+      containers:
+      - name: stream-processor
+        image: gpsgo-stream-processor:latest
+        imagePullPolicy: IfNotPresent
+        envFrom:
+        - configMapRef:
+            name: gpsgo-config
+        - secretRef:
+            name: gpsgo-secrets
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "250m"
+          limits:
+            memory: "512Mi"
+            cpu: "1000m"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ingestion-service
+  labels:
+    app: ingestion-service
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: ingestion-service
+  template:
+    metadata:
+      labels:
+        app: ingestion-service
+    spec:
+      containers:
+      - name: ingestion-service
+        image: gpsgo-ingestion:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 5001
+        - containerPort: 5002
+        - containerPort: 5003
+        - containerPort: 5004
+        - containerPort: 5027
+        - containerPort: 5028
+          protocol: UDP
+        envFrom:
+        - configMapRef:
+            name: gpsgo-config
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "200m"
+          limits:
+            memory: "1Gi"
+            cpu: "1000m"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: websocket-service
+  labels:
+    app: websocket-service
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: websocket-service
+  template:
+    metadata:
+      labels:
+        app: websocket-service
+    spec:
+      containers:
+      - name: websocket-service
+        image: gpsgo-websocket:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8081
+        envFrom:
+        - configMapRef:
+            name: gpsgo-config
+        - secretRef:
+            name: gpsgo-secrets
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend
+  labels:
+    app: frontend
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: frontend
+  template:
+    metadata:
+      labels:
+        app: frontend
+    spec:
+      containers:
+      - name: frontend
+        image: gpsgo-frontend:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 80
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "50m"
+          limits:
+            memory: "128Mi"
+            cpu: "200m"

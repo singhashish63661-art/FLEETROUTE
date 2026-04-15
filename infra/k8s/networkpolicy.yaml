@@ -1,0 +1,78 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-frontend
+spec:
+  podSelector:
+    matchLabels:
+      app: frontend
+  ingress:
+  - ports:
+    - protocol: TCP
+      port: 80
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-api
+spec:
+  podSelector:
+    matchLabels:
+      app: api-service
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          app: frontend
+    ports:
+    - protocol: TCP
+      port: 8080
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-websocket
+spec:
+  podSelector:
+    matchLabels:
+      app: websocket-service
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          app: frontend
+    ports:
+    - protocol: TCP
+      port: 8081
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-ingestion
+spec:
+  podSelector:
+    matchLabels:
+      app: ingestion-service
+  ingress:
+  - ports:
+    - protocol: TCP
+      port: 5001
+    - protocol: TCP
+      port: 5002
+    - protocol: TCP
+      port: 5003
+    - protocol: TCP
+      port: 5004
+    - protocol: TCP
+      port: 5027
+    - protocol: UDP
+      port: 5028

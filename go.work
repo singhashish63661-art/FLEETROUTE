@@ -1,0 +1,10 @@
+go 1.22
+
+use (
+	./pkg
+	./protocols
+	./ingestion-service
+	./stream-processor
+	./api-service
+	./websocket-service
+)
